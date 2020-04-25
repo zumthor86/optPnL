@@ -3,6 +3,7 @@
 export("%>%")
 export(Option_Leg)
 export(Option_Strategy)
+import(data.table)
 import(plotly)
 importFrom(fOptions,GBSOption)
 importFrom(magrittr,"%>%")

@@ -44,6 +44,49 @@ compute_option_pnl <- function(anchor, multiplier = 100, days_to_exp = 0, r = 0.
   )
 }
 
+#' Compute strategy pnl
+#'
+#' @param days_to_exp Number of days to expiration, numeric
+#'
+#' @import data.table
+#'
+#' @return List of pnl, breakevens, max profit and max loss
+#'
+compute_strategy_pnl <- function(days_to_exp=0) {
+
+  strikes <- purrr::map_dbl(self$legs, "strike_price")
+
+  anchor <- round(mean(strikes))
+
+  pnls <- lapply(self$legs, function(leg) leg$compute_option_pnl(anchor,
+                                                                 days_to_exp = days_to_exp))
+
+  opening_prices <- purrr::map(self$legs, "price")
+
+  pnl_scen <- purrr::pmap(
+    list(pnls, self$positions, opening_prices),
+    ~ (..1 * ..2) + ..3 * -1 * ..2 * 100
+  ) %>% purrr::reduce(`+`)
+
+
+  pnl_dt <- data.table::data.table(underlyer = as.numeric(rownames(pnl_scen)),
+                                   pnl = pnl_scen[,1])
+
+  pnl <- NULL
+
+  pnl_x <- pnl_dt[sign(pnl) != sign(shift(pnl)) | sign(pnl) != sign(shift(pnl, type = "lead"))  ]
+
+  slope <- (pnl_x$pnl[1]-pnl_x$pnl[2])/(pnl_x$underlyer[1]-pnl_x$underlyer[2])
+
+  self$pnl <- pnl_dt
+
+  self$breakevens <- pnl_x$underlyer[1] - pnl_x$pnl[1]/slope
+
+  self$max_profit <- max(pnl_scen)
+
+  self$max_loss <- min(pnl_scen)
+}
+
 #' Plot strategy pnl
 #'
 #' @param days_to_exp Number of days until expiration for all legs in strategy
@@ -52,9 +95,9 @@ compute_option_pnl <- function(anchor, multiplier = 100, days_to_exp = 0, r = 0.
 #'
 #' @return plotly plot of strategy pnl
 #'
-plot_strategy_pnl <- function(days_to_exp) {
+plot_strategy_pnl <- function(days_to_exp=0) {
 
-  self$compute_strategy_pnl(days_to_exp)
+  private$compute_strategy_pnl(days_to_exp)
 
   min_y <- min(self$pnl)*1.1
 
@@ -114,44 +157,7 @@ plot_strategy_pnl <- function(days_to_exp) {
 
 }
 
-#' Compute strategy pnl
-#'
-#' @param days_to_exp Number of days to expiration, numeric
-#'
-#' @return List of pnl, breakevens, max profit and max loss
-#'
-compute_strategy_pnl <- function(days_to_exp=0) {
 
-  strikes <- purrr::map_dbl(self$legs, "strike_price")
-
-  anchor <- round(mean(strikes))
-
-  pnls <- lapply(self$legs, function(leg) leg$compute_option_pnl(anchor,
-                                                                 days_to_exp = days_to_exp))
-
-  opening_prices <- purrr::map(self$legs, "price")
-
-  pnl_scen <- purrr::pmap(
-    list(pnls, self$positions, opening_prices),
-    ~ (..1 * ..2) + ..3 * -1 * ..2 * 100
-  ) %>% purrr::reduce(`+`)
-
-
-  pnl_dt <- data.table::data.table(underlyer = as.numeric(rownames(pnl_scen)),
-                                   pnl = pnl_scen[,1])
-
-  pnl_x <- pnl_dt[sign(pnl) != sign(shift(pnl)) | sign(pnl) != sign(shift(pnl, type = "lead"))  ]
-
-  slope <- (pnl_x$pnl[1]-pnl_x$pnl[2])/(pnl_x$underlyer[1]-pnl_x$underlyer[2])
-
-  self$pnl <- pnl_dt
-
-  self$breakevens <- pnl_x$underlyer[1] - pnl_x$pnl[1]/slope
-
-  self$max_profit <- max(pnl_scen)
-
-  self$max_loss <- min(pnl_scen)
-}
 
 #'@export
 Option_Leg <- R6::R6Class(classname = "Option_Leg",
