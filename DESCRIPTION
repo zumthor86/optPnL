@@ -1,7 +1,7 @@
 Package: optPnL
 Type: Package
 Title: Plots interactive options strategy profit and loss diagrams
-Version: 0.1.0
+Version: 0.1.1
 Author: Christopher Sumter
 Maintainer: <csumter1165@gmail.com>
 Description: More about what it does (maybe more than one line)
@@ -12,3 +12,4 @@ LazyData: true
 RoxygenNote: 6.1.1
 Imports: 
     magrittr
+
