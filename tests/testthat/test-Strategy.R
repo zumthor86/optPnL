@@ -1,5 +1,5 @@
 test_that("multiplication works", {
-  testthat::expect_success({l1 <-  Option_Leg$new(strike = 220,
+  testthat::expect_success({l1 <-  Option_Leg$new(strike = 200,
                                                  type = "C",
                                                  underlyer = "BABA",
                                                  expiry = "2020-04-24",
