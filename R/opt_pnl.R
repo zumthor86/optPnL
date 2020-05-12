@@ -78,13 +78,37 @@ compute_strategy_pnl <- function(days_to_exp=0) {
 
   slope <- (pnl_x$pnl[1]-pnl_x$pnl[2])/(pnl_x$underlyer[1]-pnl_x$underlyer[2])
 
-  self$pnl <- pnl_dt
+  self$pnl <- clip_pnl(pnl_dt)
 
   self$breakevens <- pnl_x$underlyer[1] - pnl_x$pnl[1]/slope
 
   self$max_profit <- max(pnl_scen)
 
   self$max_loss <- min(pnl_scen)
+}
+
+#' Clip strategy pnl plot
+#'
+#' @return clipped pnl data.table
+#'
+clip_pnl <- function(pnl_dt){
+
+  pnl_dt[, delta := pnl-shift(pnl, n = 1)!=0]
+
+  pnl_length <- nrow(pnl_dt)
+
+  idx <- 1:pnl_length
+
+  start_idx <- min(idx[pnl_dt$delta], na.rm = T)
+
+  end_idx <- max(idx[pnl_dt$delta], na.rm = T)
+
+  if (start_idx!=1) start_idx <- start_idx - 5
+
+  if (end_idx!=pnl_length) end_idx <- end_idx + 5
+
+  invisible(pnl_dt[start_idx:end_idx])
+
 }
 
 #' Plot strategy pnl
@@ -203,6 +227,7 @@ Option_Strategy <- R6::R6Class(classname = "Option_Strategy",
                                              },
 
                                              plot_strategy_pnl =  plot_strategy_pnl),
-                               private = list(compute_strategy_pnl = compute_strategy_pnl))
+                               private = list(compute_strategy_pnl = compute_strategy_pnl,
+                                              clip_pnl = clip_pnl))
 
 
