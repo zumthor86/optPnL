@@ -1,7 +1,7 @@
 Package: optPnL
 Type: Package
 Title: Plots options strategy profit and loss diagrams
-Version: 0.1.1
+Version: 0.1.2
 Author: Christopher Sumter
 Maintainer: <csumter1165@gmail.com>
 Description: More about what it does (maybe more than one line)
