@@ -74,17 +74,33 @@ compute_strategy_pnl <- function(days_to_exp=0) {
 
   pnl <- NULL
 
-  pnl_x <- pnl_dt[sign(pnl) != sign(shift(pnl)) | sign(pnl) != sign(shift(pnl, type = "lead"))  ]
+  pnl_x <- pnl_dt[sign(pnl) != sign(shift(pnl)) | sign(pnl) != sign(shift(pnl, type = "lead"))]
 
-  slope <- (pnl_x$pnl[1]-pnl_x$pnl[2])/(pnl_x$underlyer[1]-pnl_x$underlyer[2])
+  pnl_x[, cross:=rep(1:(nrow(pnl_x)/2), each=2)]
+
+  x_split <- split(pnl_x, by = "cross")
 
   self$pnl <- clip_pnl(pnl_dt)
 
-  self$breakevens <- pnl_x$underlyer[1] - pnl_x$pnl[1]/slope
+  self$breakevens <- vapply(x_split, calculate_brkeven, FUN.VALUE = numeric(1))
 
   self$max_profit <- max(pnl_scen)
 
   self$max_loss <- min(pnl_scen)
+}
+
+#' Calculate breakevens
+#'
+#' @param pnl_crossing dataframe containing a single pnl crossing
+#'
+#' @return breakeven
+#'
+calculate_brkeven <- function(pnl_crossing){
+
+  slope <- (pnl_crossing$pnl[1L]-pnl_crossing$pnl[2L])/(pnl_crossing$underlyer[1L]-pnl_crossing$underlyer[2L])
+
+  pnl_crossing$underlyer[1L] - pnl_crossing$pnl[1L]/slope
+
 }
 
 #' Clip strategy pnl plot
@@ -93,21 +109,13 @@ compute_strategy_pnl <- function(days_to_exp=0) {
 #'
 clip_pnl <- function(pnl_dt){
 
-  pnl_dt[, delta := pnl-shift(pnl, n = 1)!=0]
+    pnl_dt[, delta:=(pnl-shift(pnl, n = 5)!=0) | (pnl-shift(pnl, n = -5)!=0)]
 
-  pnl_length <- nrow(pnl_dt)
+  pnl_dt <- na.omit(pnl_dt)
 
-  idx <- 1:pnl_length
+  pnl_dt[,incl:=abs(pnl)<=1.5*mean(abs(pnl))]
 
-  start_idx <- min(idx[pnl_dt$delta], na.rm = T)
-
-  end_idx <- max(idx[pnl_dt$delta], na.rm = T)
-
-  if (start_idx!=1) start_idx <- start_idx - 5
-
-  if (end_idx!=pnl_length) end_idx <- end_idx + 5
-
-  invisible(pnl_dt[start_idx:end_idx])
+  invisible(pnl_dt[delta==T & incl==T])
 
 }
 
@@ -123,9 +131,9 @@ plot_strategy_pnl <- function(days_to_exp=0) {
 
   private$compute_strategy_pnl(days_to_exp)
 
-  min_y <- min(self$pnl)*1.1
+  min_y <- min(self$pnl)*1.2
 
-  max_y <- max(self$pnl)*1.1
+  max_y <- max(self$pnl)*1.2
 
   font_style <- list(
     "family" = "sans-serif",
@@ -155,27 +163,27 @@ plot_strategy_pnl <- function(days_to_exp=0) {
       title = plot_title
     )
 
-  base_plot <- base_plot %>%
-    plotly::add_segments(
-      x = self$breakevens,
-      xend = self$breakevens,
-      y = 0,
-      yend = max_y-5,
-      color = I("grey")
-    ) %>%
-    plotly::layout(annotations = list(
-      x = self$breakevens,
-      y = max_y+1,
-      text = glue::glue("Breakeven: {self$breakevens}"),
-      xref = "x",
-      yref = "y",
-      showarrow = FALSE,
-      font = list(
-        "family" = "sans-serif",
-        "size" = 12,
-        "color" = "white"
-      )
-    ))
+  # base_plot <- base_plot %>%
+  #   plotly::add_segments(
+  #     x = self$breakevens,
+  #     xend = self$breakevens,
+  #     y = 0,
+  #     yend = max_y-5,
+  #     color = I("grey")
+  #   ) %>%
+  #   plotly::layout(annotations = list(
+  #     x = self$breakevens,
+  #     y = max_y+1,
+  #     text = glue::glue("Breakeven: {self$breakevens}"),
+  #     xref = "x",
+  #     yref = "y",
+  #     showarrow = FALSE,
+  #     font = list(
+  #       "family" = "sans-serif",
+  #       "size" = 12,
+  #       "color" = "white"
+  #     )
+  #   ))
 
   base_plot
 
@@ -229,5 +237,28 @@ Option_Strategy <- R6::R6Class(classname = "Option_Strategy",
                                              plot_strategy_pnl =  plot_strategy_pnl),
                                private = list(compute_strategy_pnl = compute_strategy_pnl,
                                               clip_pnl = clip_pnl))
+
+
+#' Create strategy from dataframe
+#'
+#' @param strat_dt
+#' @param days_to_exp
+#'
+#' @return
+#'
+#'
+create_strat <- function(strat_dt, days_to_exp = 0){
+
+  legs <- Map(optPnL::Option_Leg$new,
+              strat_dt$Strike,
+              strat_dt$Type,
+              strat_dt$Underlyer,
+              strat_dt$Expiry,
+              strat_dt$Price)
+
+  optPnL::Option_Strategy$new(legs = legs, positions = strat_dt$Position)
+
+}
+
 
 
