@@ -1,5 +1,5 @@
 
-test_that("Strat1 works", {
+test_that("Call spread works", {
 
   testthat::expect_is(strats$`EEM.2020-06-12`$plot_strategy_pnl(),
                       class = "plotly")
@@ -7,7 +7,7 @@ test_that("Strat1 works", {
 
 })
 
-test_that("Strat2 works", {
+test_that("Ratio put spread works", {
 
   testthat::expect_is(strats$`UBER.2020-06-12`$plot_strategy_pnl(),
                       class = "plotly")
@@ -15,7 +15,7 @@ test_that("Strat2 works", {
 
 })
 
-test_that("Strat3 works", {
+test_that("Ratio put spread works", {
 
   testthat::expect_is(strats$`F.2020-06-12`$plot_strategy_pnl(),
                       class = "plotly")
@@ -24,7 +24,7 @@ test_that("Strat3 works", {
 })
 
 
-test_that("Strat4 works", {
+test_that("Put spread works", {
 
   testthat::expect_is(strats$`HYG.2020-06-12`$plot_strategy_pnl(),
                       class = "plotly")
@@ -32,9 +32,9 @@ test_that("Strat4 works", {
 
 })
 
-test_that("Strat5 works", {
+test_that("Iron Condor works", {
 
-  testthat::expect_is(strats$`GE.2020-06-12`$plot_strategy_pnl(),
+  testthat::expect_is(strats$`MRK.2020-10-23`$plot_strategy_pnl(),
                       class = "plotly")
 
 

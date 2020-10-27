@@ -21,17 +21,27 @@
 #'
 #' }
 #'
-compute_option_pnl <- function(anchor, multiplier = 100, days_to_exp = 0, r = 0.05, b=0.05, sigma=0.1) {
+compute_option_pnl <- function(underlyer_space, multiplier = 100, days_to_exp = 0, r = 0.005, b=0.01) {
+
+  time_to_expiration <- as.numeric(self$expiry-self$price_date)/365
+
+  sigma <- fOptions::GBSVolatility(price = self$price,
+                                   TypeFlag = self$option_type,
+                                   S = self$underlyer_price,
+                                   X = self$strike_price,
+                                   Time = time_to_expiration,
+                                   r = r,
+                                   b = b)
+
+
   partial_options <- purrr::partial(fOptions::GBSOption,
-                                    TypeFlag = tolower(self$option_type),
+                                    TypeFlag = self$option_type,
                                     X = self$strike_price,
-                                    Time = days_to_exp/365,
+                                    Time = days_to_exp,
                                     r = r,
                                     b = b,
                                     sigma = sigma
   )
-
-  underlyer_space <- seq(signif(anchor / 2, 2), signif(anchor * 2, 2), by = 0.5)
 
   option_scenarios <- purrr::map_dbl(underlyer_space, ~ partial_options(S = .) %>% slot("price"))
 
@@ -52,13 +62,33 @@ compute_option_pnl <- function(anchor, multiplier = 100, days_to_exp = 0, r = 0.
 #'
 #' @return List of pnl, breakevens, max profit and max loss
 #'
-compute_strategy_pnl <- function(days_to_exp=0) {
+compute_strategy_pnl <- function(days_to_exp=0, underlyer_pct_move = 0.1) {
+
+  exp_dates <- lubridate::as_date(purrr::map_dbl(self$legs, "expiry"))
+
+  earliest_exp_date <- min(exp_dates)
+
+  legs_days_to_exp <- as.numeric(exp_dates-earliest_exp_date)+days_to_exp
 
   strikes <- purrr::map_dbl(self$legs, "strike_price")
 
-  anchor <- round(mean(strikes))
+  max_underyler_price <- round(max(strikes)*(1+underlyer_pct_move))
 
-  pnls <- lapply(self$legs, function(leg) leg$compute_option_pnl(anchor,
+  min_underyler_price <- round(min(strikes)*(1-underlyer_pct_move))
+
+  if (unique(legs_days_to_exp)==0){
+
+    underlyer_space <- sort(c(unique(strikes), max_underyler_price, min_underyler_price))
+
+  }else {
+
+    underlyer_space <- seq(from =  min_underyler_price, to = max_underyler_price, length.out = 50)
+
+  }
+
+  pnls <- purrr::map2(self$legs,
+                      legs_days_to_exp,
+                      .f =  function(leg, days_to_exp) leg$compute_option_pnl(underlyer_space,
                                                                  days_to_exp = days_to_exp))
 
   opening_prices <- purrr::map(self$legs, "price")
@@ -72,17 +102,13 @@ compute_strategy_pnl <- function(days_to_exp=0) {
   pnl_dt <- data.table::data.table(underlyer = as.numeric(rownames(pnl_scen)),
                                    pnl = pnl_scen[,1])
 
-  pnl <- NULL
+  pnl <- underlyer <-  NULL
 
-  pnl_x <- pnl_dt[sign(pnl) != sign(shift(pnl)) | sign(pnl) != sign(shift(pnl, type = "lead"))]
+  pnl_dt[, breakeven:=underlyer-pnl/((pnl-shift(pnl,1))/(underlyer-shift(underlyer,1)))]
 
-  pnl_x[, cross:=rep(1:(nrow(pnl_x)/2), each=2)]
+  self$pnl <- pnl_dt[, !c("breakeven")]
 
-  x_split <- split(pnl_x, by = "cross")
-
-  self$pnl <- clip_pnl(pnl_dt)
-
-  self$breakevens <- vapply(x_split, calculate_brkeven, FUN.VALUE = numeric(1))
+  self$breakevens <- pnl_dt[is.finite(breakeven), breakeven]
 
   self$max_profit <- max(pnl_scen)
 
@@ -163,28 +189,6 @@ plot_strategy_pnl <- function(days_to_exp=0) {
       title = plot_title
     )
 
-  # base_plot <- base_plot %>%
-  #   plotly::add_segments(
-  #     x = self$breakevens,
-  #     xend = self$breakevens,
-  #     y = 0,
-  #     yend = max_y-5,
-  #     color = I("grey")
-  #   ) %>%
-  #   plotly::layout(annotations = list(
-  #     x = self$breakevens,
-  #     y = max_y+1,
-  #     text = glue::glue("Breakeven: {self$breakevens}"),
-  #     xref = "x",
-  #     yref = "y",
-  #     showarrow = FALSE,
-  #     font = list(
-  #       "family" = "sans-serif",
-  #       "size" = 12,
-  #       "color" = "white"
-  #     )
-  #   ))
-
   base_plot
 
 }
@@ -195,19 +199,25 @@ plot_strategy_pnl <- function(days_to_exp=0) {
 Option_Leg <- R6::R6Class(classname = "Option_Leg",
             public = list(strike_price = NA,
                           option_type = NA,
-                          underlyer = NA,
+                          underlyer_name = NA,
+                          underlyer_price = NA,
+                          price_date = NA,
                           expiry = NA,
                           price = NA,
                           initialize = function(strike,
                                                 type,
-                                                underlyer,
+                                                underlyer_name,
+                                                underlyer_price,
+                                                price_date,
                                                 expiry,
                                                 price){
 
                             self$strike_price <- strike
-                            self$option_type <- type
-                            self$underlyer <- underlyer
-                            self$expiry <- expiry
+                            self$option_type <- tolower(type)
+                            self$underlyer_name <- underlyer_name
+                            self$underlyer_price <- underlyer_price
+                            self$price_date <- as.Date(price_date)
+                            self$expiry <- as.Date(expiry)
                             self$price <- price
 
 
@@ -225,6 +235,8 @@ Option_Strategy <- R6::R6Class(classname = "Option_Strategy",
                                              initialize = function(legs, positions){
 
                                                checkmate::assert_numeric(positions)
+
+                                               checkmate::assert(length(positions)==length(legs))
 
                                                checkmate::assert_list(legs, types = "Option_Leg")
 
@@ -253,6 +265,8 @@ create_strat <- function(strat_dt, days_to_exp = 0){
               strat_dt$Strike,
               strat_dt$Type,
               strat_dt$Underlyer,
+              strat_dt$Underlyer_price,
+              strat_dt$price_date,
               strat_dt$Expiry,
               strat_dt$Price)
 
