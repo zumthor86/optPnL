@@ -37,7 +37,7 @@ compute_option_pnl <- function(underlyer_space, multiplier = 100, days_to_exp = 
   partial_options <- purrr::partial(fOptions::GBSOption,
                                     TypeFlag = self$option_type,
                                     X = self$strike_price,
-                                    Time = days_to_exp,
+                                    Time = days_to_exp/365,
                                     r = r,
                                     b = b,
                                     sigma = sigma
@@ -76,13 +76,13 @@ compute_strategy_pnl <- function(days_to_exp=0, underlyer_pct_move = 0.1) {
 
   min_underyler_price <- round(min(strikes)*(1-underlyer_pct_move))
 
-  if (unique(legs_days_to_exp)==0){
+  if (length(unique(legs_days_to_exp))==1){
 
     underlyer_space <- sort(c(unique(strikes), max_underyler_price, min_underyler_price))
 
   }else {
 
-    underlyer_space <- seq(from =  min_underyler_price, to = max_underyler_price, length.out = 50)
+    underlyer_space <- round(seq(from =  min_underyler_price, to = max_underyler_price, length.out = 50), digits = 2)
 
   }
 
@@ -108,7 +108,7 @@ compute_strategy_pnl <- function(days_to_exp=0, underlyer_pct_move = 0.1) {
 
   self$pnl <- pnl_dt[, !c("breakeven")]
 
-  self$breakevens <- pnl_dt[is.finite(breakeven), breakeven]
+  self$breakevens <- pnl_dt[(pnl*shift(pnl,1))<0, breakeven]
 
   self$max_profit <- max(pnl_scen)
 

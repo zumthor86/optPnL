@@ -40,6 +40,13 @@ test_that("Iron Condor works", {
 
 })
 
+test_that("Double Calendar spread works", {
+
+  testthat::expect_is(strats$`SPY.2020-10-30`$plot_strategy_pnl(),
+                      class = "plotly")
+
+})
+
 
 
 
