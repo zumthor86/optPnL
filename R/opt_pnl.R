@@ -23,24 +23,13 @@
 #'
 compute_option_pnl <- function(underlyer_space, multiplier = 100, days_to_exp = 0, r = 0.005, b=0.01) {
 
-  time_to_expiration <- as.numeric(self$expiry-self$price_date)/365
-
-  sigma <- fOptions::GBSVolatility(price = self$price,
-                                   TypeFlag = self$option_type,
-                                   S = self$underlyer_price,
-                                   X = self$strike_price,
-                                   Time = time_to_expiration,
-                                   r = r,
-                                   b = b)
-
-
   partial_options <- purrr::partial(fOptions::GBSOption,
                                     TypeFlag = self$option_type,
                                     X = self$strike_price,
                                     Time = days_to_exp/365,
                                     r = r,
                                     b = b,
-                                    sigma = sigma
+                                    sigma = self$implied_vol
   )
 
   option_scenarios <- purrr::map_dbl(underlyer_space, ~ partial_options(S = .) %>% slot("price"))
@@ -91,13 +80,12 @@ compute_strategy_pnl <- function(days_to_exp=0, underlyer_pct_move = 0.1) {
                       .f =  function(leg, days_to_exp) leg$compute_option_pnl(underlyer_space,
                                                                  days_to_exp = days_to_exp))
 
-  opening_prices <- purrr::map(self$legs, "price")
+  opening_prices <- purrr::map_dbl(self$legs, "price")
 
   pnl_scen <- purrr::pmap(
     list(pnls, self$positions, opening_prices),
-    ~ (..1 * ..2) + ..3 * -1 * ..2 * 100
+    ~ calculate_pnl(pnl = ..1, position = ..2, opening_price = ..3)
   ) %>% purrr::reduce(`+`)
-
 
   pnl_dt <- data.table::data.table(underlyer = as.numeric(rownames(pnl_scen)),
                                    pnl = pnl_scen[,1])
@@ -115,33 +103,89 @@ compute_strategy_pnl <- function(days_to_exp=0, underlyer_pct_move = 0.1) {
   self$max_loss <- min(pnl_scen)
 }
 
-#' Calculate breakevens
+#' Compute option price scenarios at a given point in time
 #'
-#' @param pnl_crossing dataframe containing a single pnl crossing
+#' @param scenario_datetime Datetime at which to compute option price scenarios
+#' @param option_leg Option Leg object
+#' @param vol_min Lower bound of volatility scenarios as a fraction of current volatility
+#' @param vol_max Upper bound of volatility scenarios as a fraction of current volatility
+#' @param n_scenarios Number of scenarios to compute for underlyer volatility
+#' @param underlyer_min Minimum underlyer price
+#' @param underlyer_max Maximum underlyer price
+#' @param underlyer_prices Vector of underlyer closing prices, matching the option leg prices
+#' @param underlyer_margin Integer specifying padding at margins of PnL graph
 #'
-#' @return breakeven
+#' @return Matrix of option prices for different underlyer prices and volatility
+#' @export
 #'
-calculate_brkeven <- function(pnl_crossing){
+#' @importFrom purrr partial
+#' @importFrom fOptions GBSOption
+#' @importFrom purrr cross_df
+#' @importFrom purrr map2_dbl
+#' @importFrom dplyr mutate
+#' @importFrom utils tail
+#' @importFrom rlang .data
+#' @examples
+compute_option_scenarios <- function(scenario_datetime,
+                                     vol_change = 0.3,
+                                     underlyer_change=0.1,
+                                     n_scenarios = 20) {
 
-  slope <- (pnl_crossing$pnl[1L]-pnl_crossing$pnl[2L])/(pnl_crossing$underlyer[1L]-pnl_crossing$underlyer[2L])
+  time_to_mat <- compute_ttm_years(scenario_datetime, expiry = option_leg$expiry)
 
-  pnl_crossing$underlyer[1L] - pnl_crossing$pnl[1L]/slope
+  if (time_to_mat < 0) {
+    warning("Scenario datetime is after option expiry", call. = FALSE)
+    time_to_mat <- 0
+  }
 
+  partial_options <- purrr::partial(fOptions::GBSOption,
+                                    TypeFlag = self$option_type,
+                                    X = self$strike_price,
+                                    Time = time_to_mat,
+                                    r = 0.005, b = 0
+  )
+
+  underlyer_space <- seq(self$underlyer_price*(1-underlyer_change),
+                         self$underlyer_price*(1+underlyer_change),
+                         length.out = n_scenarios)
+
+  volatility_space <- seq(self$implied_vol*(1-vol_change),
+                         self$implied_vol*(1+vol_change),
+                         length.out = n_scenarios)
+
+
+  option_scenarios <- purrr::cross_df(list("vol" = volatility_space, "underlyer" = underlyer_space)) %>%
+    dplyr::mutate(price = purrr::map2_dbl(.data$vol, .data$underlyer, ~ partial_options(S = .y, sigma = .x) %>% slot("price")))
+
+  option_scenarios$price[is.nan(option_scenarios$price)] <- 0
+
+  matrix(
+    data = option_scenarios$price,
+    nrow = length(underlyer_space),
+    ncol = n_scenarios,
+    byrow = TRUE,
+    dimnames = list(underlyer_space, volatility_space)
+  )
 }
 
-#' Clip strategy pnl plot
+
+#' Calculate strategy pnl for single option
 #'
-#' @return clipped pnl data.table
+#' @param pnl Double : pnl vector
+#' @param position Double : position in that option
+#' @param opening_price Double
+#' @param multiplier Integer : option multiplier
 #'
-clip_pnl <- function(pnl_dt){
+#' @return
+#' @export
+#'
+calculate_pnl <- function(pnl,
+                          position,
+                          opening_price,
+                          multiplier = 100){
 
-    pnl_dt[, delta:=(pnl-shift(pnl, n = 5)!=0) | (pnl-shift(pnl, n = -5)!=0)]
+  pnl*position - opening_price*position*multiplier
 
-  pnl_dt <- na.omit(pnl_dt)
-
-  pnl_dt[,incl:=abs(pnl)<=1.5*mean(abs(pnl))]
-
-  invisible(pnl_dt[delta==T & incl==T])
 
 }
 
@@ -204,6 +248,9 @@ Option_Leg <- R6::R6Class(classname = "Option_Leg",
                           price_date = NA,
                           expiry = NA,
                           price = NA,
+                          time_to_expiration = NA,
+                          implied_vol = NA,
+
                           initialize = function(strike,
                                                 type,
                                                 underlyer_name,
@@ -220,9 +267,22 @@ Option_Leg <- R6::R6Class(classname = "Option_Leg",
                             self$expiry <- as.Date(expiry)
                             self$price <- price
 
+                            self$time_to_expiration <- as.numeric(self$expiry-self$price_date)/365
+
+                            self$implied_vol <- fOptions::GBSVolatility(price = self$price,
+                                                             TypeFlag = self$option_type,
+                                                             S = self$underlyer_price,
+                                                             X = self$strike_price,
+                                                             Time = self$time_to_expiration,
+                                                             r = 0.005,
+                                                             b = 0)
+
+
+
 
                           },
-                          compute_option_pnl = compute_option_pnl
+                          compute_option_pnl = compute_option_pnl,
+                          compute_option_scenarios  = compute_option_scenarios
                           ))
 #'@export
 Option_Strategy <- R6::R6Class(classname = "Option_Strategy",
@@ -247,8 +307,7 @@ Option_Strategy <- R6::R6Class(classname = "Option_Strategy",
                                              },
 
                                              plot_strategy_pnl =  plot_strategy_pnl),
-                               private = list(compute_strategy_pnl = compute_strategy_pnl,
-                                              clip_pnl = clip_pnl))
+                               private = list(compute_strategy_pnl = compute_strategy_pnl))
 
 
 #' Create strategy from dataframe
