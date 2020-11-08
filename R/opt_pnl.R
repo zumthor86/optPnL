@@ -129,9 +129,10 @@ compute_strategy_pnl <- function(days_to_exp=0, underlyer_pct_move = 0.1) {
 compute_option_scenarios <- function(scenario_datetime,
                                      vol_change = 0.3,
                                      underlyer_change=0.1,
-                                     n_scenarios = 20) {
+                                     n_scenarios = 20,
+                                     multiplier = 100) {
 
-  time_to_mat <- compute_ttm_years(scenario_datetime, expiry = option_leg$expiry)
+  time_to_mat <- compute_ttm_years(scenario_datetime, expiry = self$expiry)
 
   if (time_to_mat < 0) {
     warning("Scenario datetime is after option expiry", call. = FALSE)
@@ -145,13 +146,13 @@ compute_option_scenarios <- function(scenario_datetime,
                                     r = 0.005, b = 0
   )
 
-  underlyer_space <- seq(self$underlyer_price*(1-underlyer_change),
+  underlyer_space <- round(seq(self$underlyer_price*(1-underlyer_change),
                          self$underlyer_price*(1+underlyer_change),
-                         length.out = n_scenarios)
+                         length.out = n_scenarios), digits = 4)
 
-  volatility_space <- seq(self$implied_vol*(1-vol_change),
+  volatility_space <- round(seq(self$implied_vol*(1-vol_change),
                          self$implied_vol*(1+vol_change),
-                         length.out = n_scenarios)
+                         length.out = n_scenarios), digits = 4)
 
 
   option_scenarios <- purrr::cross_df(list("vol" = volatility_space, "underlyer" = underlyer_space)) %>%
@@ -160,12 +161,106 @@ compute_option_scenarios <- function(scenario_datetime,
   option_scenarios$price[is.nan(option_scenarios$price)] <- 0
 
   matrix(
-    data = option_scenarios$price,
+    data = option_scenarios$price*multiplier,
     nrow = length(underlyer_space),
     ncol = n_scenarios,
     byrow = TRUE,
     dimnames = list(underlyer_space, volatility_space)
   )
+}
+#' Plot an existing positions PnL scenarios at a given time
+#'
+#' @param strategy Strategy object
+#' @param scenario_datetime Time at which to evaluate scenarios
+#' @param underlyer_margin Integer specifying padding at margins of PnL graph
+#'
+#' @return 3D surface plot of PnL scenarios at given time
+#'
+#' @export
+#'
+#' @examples
+plot_strategy_scenarios <- function(scenario_datetime, underlyer_change) {
+
+    options_scenarios <- purrr::map(
+    self$legs,
+    ~ .x$compute_option_scenarios(scenario_datetime = scenario_datetime,
+                                  underlyer_change = underlyer_change)
+  )
+
+  pnl_scen <- purrr::pmap(
+    list(options_scenarios, self$opening_prices, self$positions),
+    ~ calculate_pnl(pnl = ..1, position = ..3, opening_price = ..2)
+  ) %>% purrr::reduce(`+`)
+
+  plot_scenario_surface(pnl_scen)
+}
+
+#' Plot option scenarios
+#'
+#' @param scenario_matrix Matrix of underlyer/volatility permutations
+#'
+#' @return 3D surface plot of scenarios
+#'
+#' @examples
+plot_scenario_surface <- function(scenario_matrix) {
+  font_style <- list(
+    "family" = "sans-serif",
+    "size" = 16,
+    "color" = "white"
+  )
+
+  legend_style <- list(
+    "font" = list(
+      "family" = "sans-serif",
+      "size" = 12,
+      "color" = "white"
+    )
+  )
+
+  breakeven <- matrix(data = 0, nrow = nrow(scenario_matrix), ncol = ncol(scenario_matrix))
+
+  plotly::plot_ly(showscale = FALSE) %>%
+    plotly::add_surface(
+      x = ~ colnames(scenario_matrix),
+      y = ~ rownames(scenario_matrix),
+      z = ~scenario_matrix, name = "Scenarios",
+      hovertemplate = paste0("Volatility: %{x}<br>Underlyer: %{y}<br>Price: %{z}")
+    ) %>%
+    plotly::layout(
+      scene = list(
+        xaxis = list(color = "white", title = list(text = "Volatility Space", font = font_style)),
+        yaxis = list(color = "white", title = list(text = "Underlyer Space", font = font_style)),
+        zaxis = list(color = "white", title = list(text = "Price", font = font_style))
+      ),
+      legend = legend_style,
+      plot_bgcolor = "#252525",
+      paper_bgcolor = "#252525"
+    ) %>%
+    plotly::add_surface(
+      x = ~ colnames(scenario_matrix),
+      y = ~ rownames(scenario_matrix),
+      z = ~breakeven,
+      hoverinfo = "none",
+      color = I("white"),
+      opacity = 0.5
+    )
+}
+
+#' Compute the time until maturity of an option, measured in years
+#'
+#' @param current_time Current DateTime
+#' @param expiry DateTime of option expiry
+#'
+#' @return Time to maturity, measured in years
+#' @export
+#' @importFrom lubridate interval
+#' @importFrom lubridate int_length
+#' @importFrom lubridate dyears
+#' @examples
+compute_ttm_years <- function(current_time, expiry) {
+  time_interval <- lubridate::interval(current_time, expiry)
+
+  lubridate::int_length(time_interval) / as.numeric(lubridate::dyears())
 }
 
 
@@ -292,6 +387,10 @@ Option_Strategy <- R6::R6Class(classname = "Option_Strategy",
                                              max_profit = NA,
                                              max_loss = NA,
                                              breakevens = NA,
+                                             strikes = NA,
+                                             opening_prices = NA,
+                                             expiries = NA,
+                                             option_types = NA,
                                              initialize = function(legs, positions){
 
                                                checkmate::assert_numeric(positions)
@@ -304,9 +403,22 @@ Option_Strategy <- R6::R6Class(classname = "Option_Strategy",
 
                                                self$positions <- positions
 
+                                               self$strikes <- purrr::map_dbl(self$legs, "strike_price")
+
+                                               self$opening_prices <- purrr::map_dbl(self$legs, "price")
+
+                                               self$expiries <- purrr::map(self$legs, "expiry")
+
+                                               self$option_types <- purrr::map_chr(self$legs, "option_type")
+
+                                               names(self$legs) <- paste(self$strikes,
+                                                                         self$option_types,
+                                                                         as.character(self$expiries))
+
                                              },
 
-                                             plot_strategy_pnl =  plot_strategy_pnl),
+                                             plot_strategy_pnl =  plot_strategy_pnl,
+                                             plot_strategy_scenarios = plot_strategy_scenarios),
                                private = list(compute_strategy_pnl = compute_strategy_pnl))
 
 
