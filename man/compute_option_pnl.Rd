@@ -4,12 +4,10 @@
 \alias{compute_option_pnl}
 \title{Compute option leg pnl before accounting for premiums}
 \usage{
-compute_option_pnl(anchor, multiplier = 100, days_to_exp = 0,
-  r = 0.05, b = 0.05, sigma = 0.1)
+compute_option_pnl(underlyer_space, multiplier = 100, days_to_exp = 0,
+  r = 0.005, b = 0, implied_vol = self$implied_vol)
 }
 \arguments{
-\item{anchor}{Centre point of the pnl range, double}
-
 \item{multiplier}{Number of underlyer instrument to which option holder is entitled, integer}
 
 \item{days_to_exp}{Days to expiration, double}
@@ -18,6 +16,8 @@ compute_option_pnl(anchor, multiplier = 100, days_to_exp = 0,
 
 \item{b}{Annualized cost of carry, double}
 
+\item{anchor}{Centre point of the pnl range, double}
+
 \item{sigma}{Annualized volatility/standard deviation, double}
 }
 \value{
@@ -25,13 +25,4 @@ Matrix containing pnl for different levels of the underlyer
 }
 \description{
 Compute option leg pnl before accounting for premiums
-}
-\examples{
-
-\dontrun{
-
-compute_option_pnl <-
-
-}
-
 }

@@ -4,7 +4,7 @@
 \alias{compute_strategy_pnl}
 \title{Compute strategy pnl}
 \usage{
-compute_strategy_pnl(days_to_exp = 0)
+compute_strategy_pnl(days_to_exp = 0, underlyer_pct_move = 0.1)
 }
 \arguments{
 \item{days_to_exp}{Number of days to expiration, numeric}

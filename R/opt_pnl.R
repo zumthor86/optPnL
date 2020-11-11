@@ -13,15 +13,12 @@
 #' @importFrom purrr map_dbl
 #' @importFrom purrr partial
 #'
-#' @examples
-#'
-#' \dontrun{
-#'
-#' compute_option_pnl <-
-#'
-#' }
-#'
-compute_option_pnl <- function(underlyer_space, multiplier = 100, days_to_exp = 0, r = 0.005, b=0.01) {
+compute_option_pnl <- function(underlyer_space,
+                               multiplier = 100,
+                               days_to_exp = 0,
+                               r = 0.005,
+                               b=0.,
+                               implied_vol = self$implied_vol) {
 
   partial_options <- purrr::partial(fOptions::GBSOption,
                                     TypeFlag = self$option_type,
@@ -29,7 +26,7 @@ compute_option_pnl <- function(underlyer_space, multiplier = 100, days_to_exp = 
                                     Time = days_to_exp/365,
                                     r = r,
                                     b = b,
-                                    sigma = self$implied_vol
+                                    sigma = implied_vol
   )
 
   option_scenarios <- purrr::map_dbl(underlyer_space, ~ partial_options(S = .) %>% slot("price"))
@@ -43,6 +40,47 @@ compute_option_pnl <- function(underlyer_space, multiplier = 100, days_to_exp = 
   )
 }
 
+#' Compute selected option greek for given vol+price+time
+#'
+#' @param underlyer_price
+#' @param ttm
+#' @param implied_vol
+#' @param greek
+#'
+#' @return
+#' @export
+#'
+compute_option_greeks <- function(underlyer_space,
+                                  ttm = self$time_to_expiration,
+                                  implied_vol = self$implied_vol,
+                                  greeks = c("delta", "gamma", "vega", "theta")){
+
+  partial_greeks <- purrr::partial(fOptions::GBSGreeks,TypeFlag = self$option_type,
+                                                       X = self$strike_price,
+                                                       Time = ttm,
+                                                       r = 0.005,
+                                                       b = 0,
+                                                       sigma = implied_vol)
+
+  greek_grid <- expand.grid(underlyer = underlyer_space,
+                            greeks = greeks,
+                            stringsAsFactors = FALSE)
+
+
+  option_scenarios <- purrr::map2_dbl(greek_grid$underlyer,
+                                      greek_grid$greeks, ~ partial_greeks(S = .x, Selection = .y))
+
+
+  matrix(
+    data = option_scenarios,
+    nrow = length(underlyer_space),
+    ncol = length(greeks),
+    dimnames = list(underlyer_space, greeks)
+  )
+
+
+}
+
 #' Compute strategy pnl
 #'
 #' @param days_to_exp Number of days to expiration, numeric
@@ -53,25 +91,19 @@ compute_option_pnl <- function(underlyer_space, multiplier = 100, days_to_exp = 
 #'
 compute_strategy_pnl <- function(days_to_exp=0, underlyer_pct_move = 0.1) {
 
-  exp_dates <- lubridate::as_date(purrr::map_dbl(self$legs, "expiry"))
+  earliest_exp_date <- min(self$expiries)
 
-  earliest_exp_date <- min(exp_dates)
+  legs_days_to_exp <- as.numeric(self$expiries-earliest_exp_date)+days_to_exp
 
-  legs_days_to_exp <- as.numeric(exp_dates-earliest_exp_date)+days_to_exp
-
-  strikes <- purrr::map_dbl(self$legs, "strike_price")
-
-  max_underyler_price <- round(max(strikes)*(1+underlyer_pct_move))
-
-  min_underyler_price <- round(min(strikes)*(1-underlyer_pct_move))
+  underlyer_range <- private$calculate_underlyer_space(underlyer_pct_move = underlyer_pct_move)
 
   if (length(unique(legs_days_to_exp))==1){
 
-    underlyer_space <- sort(c(unique(strikes), max_underyler_price, min_underyler_price))
+    underlyer_space <- sort(c(unique(self$strikes), max(underlyer_range), max(underlyer_range)))
 
   }else {
 
-    underlyer_space <- round(seq(from =  min_underyler_price, to = max_underyler_price, length.out = 50), digits = 2)
+    underlyer_space <- underlyer_range
 
   }
 
@@ -80,12 +112,10 @@ compute_strategy_pnl <- function(days_to_exp=0, underlyer_pct_move = 0.1) {
                       .f =  function(leg, days_to_exp) leg$compute_option_pnl(underlyer_space,
                                                                  days_to_exp = days_to_exp))
 
-  opening_prices <- purrr::map_dbl(self$legs, "price")
-
   pnl_scen <- purrr::pmap(
-    list(pnls, self$positions, opening_prices),
-    ~ calculate_pnl(pnl = ..1, position = ..2, opening_price = ..3)
-  ) %>% purrr::reduce(`+`)
+    list(pnls, self$positions, self$opening_prices),
+    ~ aggregate_strategy(option_measure = ..1, position = ..2, opening_price = ..3)) %>%
+    purrr::reduce(`+`)
 
   pnl_dt <- data.table::data.table(underlyer = as.numeric(rownames(pnl_scen)),
                                    pnl = pnl_scen[,1])
@@ -189,7 +219,7 @@ plot_strategy_scenarios <- function(scenario_datetime, underlyer_change) {
 
   pnl_scen <- purrr::pmap(
     list(options_scenarios, self$opening_prices, self$positions),
-    ~ calculate_pnl(pnl = ..1, position = ..3, opening_price = ..2)
+    ~ aggregate_strategy(pnl = ..1, position = ..3, opening_price = ..2)
   ) %>% purrr::reduce(`+`)
 
   plot_scenario_surface(pnl_scen)
@@ -274,16 +304,15 @@ compute_ttm_years <- function(current_time, expiry) {
 #' @return
 #' @export
 #'
-calculate_pnl <- function(pnl,
+aggregate_strategy <- function(option_measure,
                           position,
                           opening_price,
                           multiplier = 100){
 
-  pnl*position - opening_price*position*multiplier
+  option_measure*position - opening_price*position*multiplier
 
 
 }
-
 #' Plot strategy pnl
 #'
 #' @param days_to_exp Number of days until expiration for all legs in strategy
@@ -332,8 +361,6 @@ plot_strategy_pnl <- function(days_to_exp=0) {
 
 }
 
-
-
 #'@export
 Option_Leg <- R6::R6Class(classname = "Option_Leg",
             public = list(strike_price = NA,
@@ -345,6 +372,7 @@ Option_Leg <- R6::R6Class(classname = "Option_Leg",
                           price = NA,
                           time_to_expiration = NA,
                           implied_vol = NA,
+                          greeks = NA,
 
                           initialize = function(strike,
                                                 type,
@@ -362,7 +390,9 @@ Option_Leg <- R6::R6Class(classname = "Option_Leg",
                             self$expiry <- as.Date(expiry)
                             self$price <- price
 
-                            self$time_to_expiration <- as.numeric(self$expiry-self$price_date)/365
+                            self$time_to_expiration <- compute_ttm_years(current_time = self$price_date,
+                                                                         expiry = self$expiry)
+
 
                             self$implied_vol <- fOptions::GBSVolatility(price = self$price,
                                                              TypeFlag = self$option_type,
@@ -372,12 +402,10 @@ Option_Leg <- R6::R6Class(classname = "Option_Leg",
                                                              r = 0.005,
                                                              b = 0)
 
-
-
-
                           },
                           compute_option_pnl = compute_option_pnl,
-                          compute_option_scenarios  = compute_option_scenarios
+                          compute_option_scenarios  = compute_option_scenarios,
+                          compute_option_greeks = compute_option_greeks
                           ))
 #'@export
 Option_Strategy <- R6::R6Class(classname = "Option_Strategy",
@@ -407,7 +435,7 @@ Option_Strategy <- R6::R6Class(classname = "Option_Strategy",
 
                                                self$opening_prices <- purrr::map_dbl(self$legs, "price")
 
-                                               self$expiries <- purrr::map(self$legs, "expiry")
+                                               self$expiries <- lubridate::as_date(purrr::map_dbl(self$legs, "expiry"))
 
                                                self$option_types <- purrr::map_chr(self$legs, "option_type")
 
@@ -419,7 +447,20 @@ Option_Strategy <- R6::R6Class(classname = "Option_Strategy",
 
                                              plot_strategy_pnl =  plot_strategy_pnl,
                                              plot_strategy_scenarios = plot_strategy_scenarios),
-                               private = list(compute_strategy_pnl = compute_strategy_pnl))
+                               private = list(compute_strategy_pnl = compute_strategy_pnl,
+                                              aggregate_strategy = aggregate_strategy,
+                                              calculate_underlyer_space = function(underlyer_pct_move){
+
+                                                max_underyler_price <- round(max(self$strikes)*(1+underlyer_pct_move))
+
+                                                min_underyler_price <- round(min(self$strikes)*(1-underlyer_pct_move))
+
+                                                round(seq(from =  min_underyler_price,
+                                                          to = max_underyler_price,
+                                                          length.out = 50),
+                                                      digits = 2)
+
+                                              }))
 
 
 #' Create strategy from dataframe
