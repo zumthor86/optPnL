@@ -4,13 +4,13 @@
 \alias{plot_strategy_pnl}
 \title{Plot strategy pnl}
 \usage{
-plot_strategy_pnl(days_to_exp)
+plot_strategy_pnl(days_to_exp = 0)
 }
 \arguments{
-\item{days_to_exp}{Number of days until expiration for all legs in strategy}
+\item{days_to_exp}{}
 }
 \value{
-plotly plot of strategy pnl
+plotly plot
 }
 \description{
 Plot strategy pnl
