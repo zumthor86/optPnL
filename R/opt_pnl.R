@@ -109,7 +109,7 @@ compute_strategy_pnl <- function(days_to_exp=0, underlyer_pct_move = 0.1) {
 
   underlyer_range <- private$calculate_scenario_space(pct_move = underlyer_pct_move, option_attribute = "strikes")
 
-  if (self$is_single_expiry_strat()){
+  if (self$is_single_expiry_strat() & length(days_to_exp)==1){
 
     underlyer_space <- sort(c(unique(self$strikes), min(underlyer_range), max(underlyer_range)))
 
@@ -134,6 +134,29 @@ compute_strategy_pnl <- function(days_to_exp=0, underlyer_pct_move = 0.1) {
   private$finalize_pnl(pnl_scen, pnl_dates)
 
 }
+
+compute_strategy_greeks <- function(days_to_exp = 0, underlyer_pct_move){
+
+  earliest_exp_date <- min(self$expiries)
+
+  legs_days_to_exp <- as.numeric(self$expiries-earliest_exp_date) + days_to_exp
+
+  underlyer_range <- private$calculate_scenario_space(pct_move = underlyer_pct_move, option_attribute = "strikes")
+
+  exposures <- purrr::map2(self$legs,
+                           legs_days_to_exp,
+                           .f = function(leg, dte) leg$compute_option_greeks(underlyer_space = underlyer_range,
+                                                                             ttm = dte))
+
+  exposure_scen <- purrr::pmap(
+    list(exposures, self$positions),
+    ~ aggregate_strategy(option_measure = ..1, position = ..2, opening_price = 0)) %>%
+    purrr::reduce(`+`)
+
+  exposure_scen
+
+}
+
 
 
 finalize_pnl <- function(pnl_scen, pnl_dates) {
@@ -468,8 +491,10 @@ Option_Strategy <- R6::R6Class(classname = "Option_Strategy",
 
                                              },
 
+
                                              plot_strategy_pnl =  plot_strategy_pnl,
-                                             plot_strategy_scenarios = plot_strategy_scenarios),
+                                             plot_strategy_scenarios = plot_strategy_scenarios,
+                                             compute_strategy_greeks = compute_strategy_greeks),
                                private = list(compute_strategy_pnl = compute_strategy_pnl,
                                               aggregate_strategy = aggregate_strategy,
                                               finalize_pnl = finalize_pnl,
